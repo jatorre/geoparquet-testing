@@ -91,6 +91,17 @@ The same 250 features (200 points, 50 CCW squares, lon/lat) written by every wri
 | geoarrow-pyarrow 0.3 `write_geoparquet_table` | default | Writes 1.0.0, no logical type, `crs: null` for lon/lat data. |
 | pyarrow 25 alone | native type only | GEOMETRY logical type, no `geo` block: not GeoParquet, as the spec says. |
 
+## Public sample sweep (2026-09-07)
+
+`fixtures/public_samples.sh` downloads the example files other projects publish (the specification's
+own examples at 1.0.0, 1.1.0 and main; GDAL's autotest Parquet data; Apache Sedona's test data;
+geoarrow-data) and checks them: 38 files, no crashes, every verdict explainable. Two things it found:
+the **1.1.0 specification's own example file** orders its bbox struct `xmax, xmin, ymax, ymin`, so the
+"MUST be ordered in this same way" sentence was never followed even by the reference example (SI-26);
+and GDAL's 1.1 test files, including one with a covering, are fully conformant under the 1.1 rules.
+Pre-1.0 files (GeoParquet 0.1.0, 0.4.0) are checked as 2.0 with a note, since their rules are not
+implemented.
+
 ## Hardening round (2026-09-06)
 
 Three independent reviews (spec-conformance, hostile input, Rust code/perf) and 150+ crafted files.
