@@ -252,14 +252,23 @@ mod remote {
 
     fn build_store(url: &Url, opts: &RemoteOptions) -> Result<(Arc<dyn ObjectStore>, ObjPath)> {
         let mut kv: Vec<(String, String)> = Vec::new();
+        // object_store treats https://<bucket>.s3.<region>.amazonaws.com/... as S3 too, so give
+        // both forms the same anonymous-access options; the region can be read from such a host.
+        let host = url.host_str().unwrap_or("");
+        let s3_host_region = host
+            .strip_suffix(".amazonaws.com")
+            .and_then(|h| h.rsplit_once(".s3."))
+            .map(|(_, region)| region.to_string());
+        let is_s3 = matches!(url.scheme(), "s3" | "s3a") || s3_host_region.is_some();
         match url.scheme() {
-            "s3" | "s3a" => {
+            _ if is_s3 => {
                 if std::env::var_os("AWS_ACCESS_KEY_ID").is_none() {
                     kv.push(("aws_skip_signature".into(), "true".into()));
                 }
                 let region = opts
                     .s3_region
                     .clone()
+                    .or(s3_host_region)
                     .or_else(|| std::env::var("AWS_REGION").ok())
                     .or_else(|| std::env::var("AWS_DEFAULT_REGION").ok())
                     .unwrap_or_else(|| "us-east-1".into());

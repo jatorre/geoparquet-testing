@@ -108,6 +108,7 @@ fn extras(r: &Report) -> String {
 
 fn print_text(r: &Report, class: Class) {
     println!("{}", r.file);
+    println!("  version {} · rules: {}", r.version, r.rules);
     for c in ["core", "covering", "distribution"] {
         if !class.includes(c) {
             continue;
@@ -141,7 +142,7 @@ fn print_text(r: &Report, class: Class) {
 }
 
 fn print_summary(r: &Report) {
-    let mut line = r.file.clone();
+    let mut line = format!("{}  [{}]", r.file, r.version);
     for c in ["core", "covering", "distribution"] {
         let (p, f, s) = counts(r, c);
         line.push_str(&format!("  {c} {p}/{f}/{s}"));

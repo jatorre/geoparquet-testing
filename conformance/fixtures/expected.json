@@ -289,7 +289,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -594,6 +593,162 @@
       "/conf/distribution/spatial-order"
     ]
   },
+  "author/v10_edges_vincenty.parquet": {
+    "fail": [
+      "/conf/core/edges-value",
+      "/conf/core/geo-metadata",
+      "/conf/distribution/geospatial-statistics"
+    ],
+    "skip": [
+      "/conf/core/bbox-array",
+      "/conf/core/bbox-crs",
+      "/conf/core/bbox-extent",
+      "/conf/core/crs-consistency",
+      "/conf/core/crs-default",
+      "/conf/core/epoch",
+      "/conf/core/media-type",
+      "/conf/core/orientation-rings",
+      "/conf/core/orientation-value",
+      "/conf/covering/bbox-column-nesting",
+      "/conf/covering/bbox-column-repetition",
+      "/conf/covering/bbox-column-structure",
+      "/conf/covering/bbox-column-type",
+      "/conf/covering/bbox-paths",
+      "/conf/covering/keys",
+      "/conf/distribution/spatial-order"
+    ]
+  },
+  "author/v10_types_m.parquet": {
+    "fail": [
+      "/conf/core/geo-metadata",
+      "/conf/core/geometry-types",
+      "/conf/distribution/geospatial-statistics"
+    ],
+    "skip": [
+      "/conf/core/bbox-array",
+      "/conf/core/bbox-crs",
+      "/conf/core/bbox-extent",
+      "/conf/core/crs-consistency",
+      "/conf/core/crs-default",
+      "/conf/core/edges-value",
+      "/conf/core/epoch",
+      "/conf/core/media-type",
+      "/conf/core/orientation-rings",
+      "/conf/core/orientation-value",
+      "/conf/covering/bbox-column-nesting",
+      "/conf/covering/bbox-column-repetition",
+      "/conf/covering/bbox-column-structure",
+      "/conf/covering/bbox-column-type",
+      "/conf/covering/bbox-paths",
+      "/conf/covering/keys",
+      "/conf/distribution/spatial-order"
+    ]
+  },
+  "author/v10_wkb_ok.parquet": {
+    "fail": [
+      "/conf/distribution/geospatial-statistics"
+    ],
+    "skip": [
+      "/conf/core/bbox-array",
+      "/conf/core/bbox-crs",
+      "/conf/core/bbox-extent",
+      "/conf/core/crs-consistency",
+      "/conf/core/crs-default",
+      "/conf/core/edges-value",
+      "/conf/core/epoch",
+      "/conf/core/media-type",
+      "/conf/core/orientation-rings",
+      "/conf/core/orientation-value",
+      "/conf/covering/bbox-column-nesting",
+      "/conf/covering/bbox-column-repetition",
+      "/conf/covering/bbox-column-structure",
+      "/conf/covering/bbox-column-type",
+      "/conf/covering/bbox-paths",
+      "/conf/covering/keys",
+      "/conf/distribution/spatial-order"
+    ]
+  },
+  "author/v11_geoarrow_encoding_on_binary.parquet": {
+    "fail": [
+      "/conf/core/geometry-column-type",
+      "/conf/distribution/geospatial-statistics"
+    ],
+    "skip": [
+      "/conf/core/bbox-array",
+      "/conf/core/bbox-crs",
+      "/conf/core/bbox-extent",
+      "/conf/core/crs-consistency",
+      "/conf/core/crs-default",
+      "/conf/core/edges-value",
+      "/conf/core/epoch",
+      "/conf/core/media-type",
+      "/conf/core/orientation-rings",
+      "/conf/core/orientation-value",
+      "/conf/covering/bbox-column-nesting",
+      "/conf/covering/bbox-column-repetition",
+      "/conf/covering/bbox-column-structure",
+      "/conf/covering/bbox-column-type",
+      "/conf/covering/bbox-paths",
+      "/conf/covering/keys",
+      "/conf/distribution/spatial-order"
+    ]
+  },
+  "author/v11_geoarrow_point.parquet": {
+    "fail": [],
+    "skip": [
+      "/conf/core/axis-order",
+      "/conf/core/bbox-extent",
+      "/conf/core/crs-consistency",
+      "/conf/core/crs-default",
+      "/conf/core/edges-value",
+      "/conf/core/epoch",
+      "/conf/core/media-type",
+      "/conf/core/orientation-rings",
+      "/conf/core/orientation-value",
+      "/conf/core/wkb",
+      "/conf/distribution/spatial-order"
+    ]
+  },
+  "author/v11_geoarrow_polygon.parquet": {
+    "fail": [
+      "/conf/distribution/geospatial-statistics"
+    ],
+    "skip": [
+      "/conf/core/axis-order",
+      "/conf/core/bbox-extent",
+      "/conf/core/crs-consistency",
+      "/conf/core/crs-default",
+      "/conf/core/edges-value",
+      "/conf/core/epoch",
+      "/conf/core/media-type",
+      "/conf/core/orientation-rings",
+      "/conf/core/orientation-value",
+      "/conf/core/wkb",
+      "/conf/covering/bbox-column-nesting",
+      "/conf/covering/bbox-column-repetition",
+      "/conf/covering/bbox-column-structure",
+      "/conf/covering/bbox-column-type",
+      "/conf/covering/bbox-paths",
+      "/conf/covering/keys",
+      "/conf/distribution/spatial-order"
+    ]
+  },
+  "author/v11_wkb_covering_ok.parquet": {
+    "fail": [],
+    "skip": [
+      "/conf/core/bbox-array",
+      "/conf/core/bbox-crs",
+      "/conf/core/bbox-extent",
+      "/conf/core/crs-consistency",
+      "/conf/core/crs-default",
+      "/conf/core/edges-value",
+      "/conf/core/epoch",
+      "/conf/core/media-type",
+      "/conf/core/orientation-rings",
+      "/conf/core/orientation-value",
+      "/conf/distribution/spatial-order"
+    ]
+  },
   "author/wkb_deep_collection_ok.parquet": {
     "fail": [],
     "skip": [
@@ -694,7 +849,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -720,7 +874,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -772,7 +925,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -799,7 +951,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -826,7 +977,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -853,7 +1003,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -880,7 +1029,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -1149,7 +1297,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -1172,7 +1319,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -1195,7 +1341,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -1218,7 +1363,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -1241,7 +1385,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -1288,7 +1431,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -1378,7 +1520,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -2155,7 +2296,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -3929,7 +4069,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",
@@ -3952,7 +4091,6 @@
       "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
-      "/conf/core/crs-default",
       "/conf/core/crs-projjson",
       "/conf/core/edges-value",
       "/conf/core/epoch",

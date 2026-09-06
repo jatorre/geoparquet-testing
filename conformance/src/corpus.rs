@@ -35,7 +35,10 @@ fn expected_tests(kind: &str) -> &'static [&'static str] {
         }
         "schema_validation_error" => &[checks::GEO_METADATA, checks::CRS_PROJJSON],
         "orientation_mismatch" => &[checks::ORIENTATION_RINGS],
-        "version_feature_mismatch" | "version_unknown" => &[checks::FILE_METADATA],
+        // an unknown version string is checked as 2.0 and fails there; a 1.x file with 2.0 features
+        // is checked against its own version's rules, where the features it uses are not violations
+        "version_unknown" => &[checks::FILE_METADATA],
+        "version_feature_mismatch" => &[],
         "wkb_parse_error" => &[checks::WKB],
         _ => &[],
     }

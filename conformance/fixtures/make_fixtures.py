@@ -132,3 +132,30 @@ meridian = ga.as_wkb([f"POINT (10 {lat})" for lat in range(8)])
 geo = make_geo_metadata(columns={"geometry": col()})
 write_parquet_deterministic(pa.table({"geometry": meridian}), OUT / "order_degenerate_x.parquet", geo, row_group_size=2)
 print("wrote order_degenerate_x")
+
+# --- GeoParquet 1.0 and 1.1 files: checked against their own community rules ---
+def write_v(name, table, columns, version, primary="geometry"):
+    geo = make_geo_metadata(primary_column=primary, columns=columns)
+    geo["version"] = version
+    write_parquet_deterministic(table, OUT / f"{name}.parquet", geo)
+    print(f"wrote {name}")
+
+plain = pa.table({"geometry": pa.array([shapely_wkb for shapely_wkb in [bytes(b) for b in pa.array(geom).storage.to_pylist()]], pa.binary())}) if False else pa.table({"geometry": pa.array(geom.storage.to_pylist(), pa.binary())})
+c10 = {"encoding": "WKB", "geometry_types": ["Point"], "crs": CRS84}
+write_v("v10_wkb_ok", plain, {"geometry": c10}, "1.0.0")                                   # 1.0: plain BYTE_ARRAY, no logical type
+write_v("v10_edges_vincenty", plain, {"geometry": {**c10, "edges": "vincenty"}}, "1.0.0")    # 1.x edges vocabulary is planar|spherical
+write_v("v10_types_m", plain, {"geometry": {**c10, "geometry_types": ["Point M"]}}, "1.0.0")  # M suffix is 2.0-only
+write_v("v11_wkb_covering_ok", pa.table({"geometry": pa.array(geom.storage.to_pylist(), pa.binary()), "bbox": bbox_struct(boxes)}),
+        {"geometry": {**c10, "covering": COV}}, "1.1.0")                                     # 1.1: covering gives the statistics source
+write_v("v11_geoarrow_encoding_on_binary", plain, {"geometry": {**c10, "encoding": "point"}}, "1.1.0")  # encoding point but a binary column
+try:
+    import geopandas as gpd
+    from shapely.geometry import Point, Polygon
+    gdf = gpd.GeoDataFrame({"id": [1, 2, 3]}, geometry=[Point(1, 1), Point(2, 2), Point(3, 3)], crs="EPSG:4326")
+    gdf.to_parquet(OUT / "v11_geoarrow_point.parquet", schema_version="1.1.0", geometry_encoding="geoarrow", write_covering_bbox=True)
+    print("wrote v11_geoarrow_point")
+    polys = gpd.GeoDataFrame({"id": [1]}, geometry=[Polygon([(0, 0), (1, 0), (1, 1), (0, 1), (0, 0)])], crs="EPSG:4326")
+    polys.to_parquet(OUT / "v11_geoarrow_polygon.parquet", schema_version="1.1.0", geometry_encoding="geoarrow")
+    print("wrote v11_geoarrow_polygon")
+except ImportError as e:
+    print("geopandas not available; GeoArrow fixtures skipped:", e)

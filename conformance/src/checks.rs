@@ -8,9 +8,11 @@ use anyhow::{Result, anyhow};
 use arrow_array::{Array, ArrayRef, BinaryArray, BinaryViewArray, LargeBinaryArray};
 use parquet::arrow::ProjectionMask;
 use parquet::arrow::arrow_reader::{ArrowReaderOptions, ParquetRecordBatchReaderBuilder};
-use parquet::basic::{LogicalType, Repetition, Type as PhysicalType};
+use parquet::basic::{ConvertedType, LogicalType, Repetition, Type as PhysicalType};
+use parquet::file::metadata::ColumnChunkMetaData;
 use parquet::file::metadata::ParquetMetaData;
 use parquet::file::reader::{FileReader, SerializedFileReader};
+use parquet::file::statistics::Statistics;
 use parquet::schema::types::Type as SchemaType;
 use serde::Serialize;
 use serde_json::Value;
@@ -95,6 +97,63 @@ const EDGES: [&str; 6] = [
     "andoyer",
     "karney",
 ];
+const EDGES_1X: [&str; 2] = ["planar", "spherical"];
+const GEOARROW: [&str; 6] = [
+    "point",
+    "linestring",
+    "polygon",
+    "multipoint",
+    "multilinestring",
+    "multipolygon",
+];
+
+/// Which GeoParquet specification the file claims; it decides which rules apply. The OGC
+/// abstract tests are written for 2.0; 1.0 and 1.1 files are checked against their own
+/// community specification with the same test identifiers.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Spec {
+    V1_0,
+    V1_1,
+    V2_0,
+}
+
+impl Spec {
+    fn from_version(v: &str) -> Option<Spec> {
+        if v.starts_with("2.0") {
+            Some(Spec::V2_0)
+        } else if v.starts_with("1.1") {
+            Some(Spec::V1_1)
+        } else if v.starts_with("1.0") {
+            Some(Spec::V1_0)
+        } else {
+            None
+        }
+    }
+    fn rules(self) -> &'static str {
+        match self {
+            Spec::V2_0 => "GeoParquet 2.0.0: the abstract tests of the OGC draft",
+            Spec::V1_1 => {
+                "GeoParquet 1.1.0 community specification (the OGC conformance classes are defined for 2.0)"
+            }
+            Spec::V1_0 => {
+                "GeoParquet 1.0.0 community specification (the OGC conformance classes are defined for 2.0)"
+            }
+        }
+    }
+    fn versions(self) -> &'static [&'static str] {
+        match self {
+            Spec::V2_0 => &["2.0.0"],
+            Spec::V1_1 => &["1.1.0"],
+            Spec::V1_0 => &["1.0.0", "1.0.0-beta.1"],
+        }
+    }
+    fn edges(self) -> &'static [&'static str] {
+        match self {
+            Spec::V2_0 => &EDGES,
+            _ => &EDGES_1X,
+        }
+    }
+}
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
@@ -130,6 +189,10 @@ pub struct Report {
     /// (bytes fetched, range requests) for remote sources
     pub traffic: Option<(u64, u64)>,
     pub sampled: bool,
+    /// the `version` the file declares ("unknown" when absent)
+    pub version: String,
+    /// which rules were applied, in words
+    pub rules: String,
 }
 
 impl Report {
@@ -146,36 +209,62 @@ impl Report {
 }
 
 pub struct Schemas {
-    geo: jsonschema::Validator,
-    projjson: jsonschema::Validator,
+    geo: [jsonschema::Validator; 3],
+    crs: [jsonschema::Validator; 2],
 }
 
 impl Schemas {
     pub fn load() -> Result<Schemas> {
-        let geo: Value = serde_json::from_str(include_str!("../schemas/geoparquet-2.0.0.json"))?;
-        let projjson: Value =
+        let projjson7: Value =
             serde_json::from_str(include_str!("../schemas/projjson.schema.json"))?;
-        // schema.json refers to the PROJJSON schema by URL; serve the vendored copy instead of
-        // fetching it, unmodified, so /conf/core/geo-metadata validates against the published schema.
+        let projjson5: Value =
+            serde_json::from_str(include_str!("../schemas/projjson-v0.5.schema.json"))?;
+        // The GeoParquet schemas refer to the PROJJSON schemas by URL; serve the vendored copies,
+        // unmodified, so /conf/core/geo-metadata validates against the published schema offline.
         let registry = jsonschema::Registry::new()
             .add(
                 "https://proj.org/schemas/v0.7/projjson.schema.json",
-                jsonschema::Resource::from_contents(projjson.clone()),
+                jsonschema::Resource::from_contents(projjson7.clone()),
             )
+            .and_then(|b| {
+                b.add(
+                    "https://proj.org/schemas/v0.5/projjson.schema.json",
+                    jsonschema::Resource::from_contents(projjson5.clone()),
+                )
+            })
             .and_then(|b| b.prepare())
             .map_err(|e| anyhow!("schema registry: {e}"))?;
+        let geo_validator = |text: &str| -> Result<jsonschema::Validator> {
+            let schema: Value = serde_json::from_str(text)?;
+            jsonschema::options()
+                .with_registry(&registry)
+                .build(&schema)
+                .map_err(|e| anyhow!("geoparquet schema: {e}"))
+        };
         // The PROJJSON schema also describes datums, ellipsoids and operations; a GeoParquet
         // `crs` must be a CRS, so /conf/core/crs-projjson validates against its `crs` definition.
-        let mut crs_only = projjson.clone();
-        crs_only["oneOf"] = serde_json::json!([{ "$ref": "#/definitions/crs" }]);
+        let crs_validator = |mut schema: Value| -> Result<jsonschema::Validator> {
+            schema["oneOf"] = serde_json::json!([{ "$ref": "#/definitions/crs" }]);
+            jsonschema::validator_for(&schema).map_err(|e| anyhow!("projjson schema: {e}"))
+        };
         Ok(Schemas {
-            geo: jsonschema::options()
-                .with_registry(&registry)
-                .build(&geo)
-                .map_err(|e| anyhow!("geoparquet schema: {e}"))?,
-            projjson: jsonschema::validator_for(&crs_only)
-                .map_err(|e| anyhow!("projjson schema: {e}"))?,
+            geo: [
+                geo_validator(include_str!("../schemas/geoparquet-1.0.0.json"))?,
+                geo_validator(include_str!("../schemas/geoparquet-1.1.0.json"))?,
+                geo_validator(include_str!("../schemas/geoparquet-2.0.0.json"))?,
+            ],
+            crs: [crs_validator(projjson5)?, crs_validator(projjson7)?],
         })
+    }
+    fn geo(&self, spec: Spec) -> &jsonschema::Validator {
+        &self.geo[match spec {
+            Spec::V1_0 => 0,
+            Spec::V1_1 => 1,
+            Spec::V2_0 => 2,
+        }]
+    }
+    fn crs(&self, spec: Spec) -> &jsonschema::Validator {
+        &self.crs[usize::from(spec != Spec::V1_0)]
     }
 }
 
@@ -269,13 +358,111 @@ fn schema_has_nested(fields: &[Arc<SchemaType>], name: &str) -> bool {
     })
 }
 
-fn valid_type_name(s: &str) -> bool {
-    let base = s
-        .strip_suffix(" ZM")
-        .or_else(|| s.strip_suffix(" Z"))
-        .or_else(|| s.strip_suffix(" M"))
-        .unwrap_or(s);
+fn valid_type_name(s: &str, spec: Spec) -> bool {
+    let base = if spec == Spec::V2_0 {
+        s.strip_suffix(" ZM")
+            .or_else(|| s.strip_suffix(" Z"))
+            .or_else(|| s.strip_suffix(" M"))
+            .unwrap_or(s)
+    } else {
+        s.strip_suffix(" Z").unwrap_or(s)
+    };
     wkb::BASE_NAMES.contains(&base)
+}
+
+/// GeoArrow encodings of GeoParquet 1.1: a struct of DOUBLE x, y (and z), wrapped in as many
+/// Parquet lists as the geometry type has levels (linestring 1, polygon 2, multipolygon 3).
+fn geoarrow_shape(f: &SchemaType, encoding: &str) -> Result<(), String> {
+    let want = match encoding {
+        "point" => 0,
+        "linestring" | "multipoint" => 1,
+        "polygon" | "multilinestring" => 2,
+        "multipolygon" => 3,
+        _ => return Err(format!("unknown GeoArrow encoding {encoding:?}")),
+    };
+    let mut cur = f;
+    let mut depth = 0;
+    loop {
+        if !cur.is_group() {
+            return Err(format!(
+                "GeoArrow encoding {encoding:?} needs a group column, found a primitive"
+            ));
+        }
+        let is_list = matches!(logical(cur), Some(LogicalType::List))
+            || cur.get_basic_info().converted_type() == ConvertedType::LIST;
+        if !is_list {
+            break;
+        }
+        let inner = cur.get_fields().first().ok_or("empty list group")?;
+        let elem = if inner.is_group()
+            && !matches!(logical(inner), Some(LogicalType::List))
+            && inner.get_fields().len() == 1
+        {
+            &inner.get_fields()[0]
+        } else {
+            inner
+        };
+        cur = elem;
+        depth += 1;
+        if depth > 4 {
+            return Err("more than four list levels".into());
+        }
+    }
+    if depth != want {
+        return Err(format!(
+            "GeoArrow encoding {encoding:?} needs {want} list level(s), found {depth}"
+        ));
+    }
+    let names: Vec<&str> = cur.get_fields().iter().map(|c| c.name()).collect();
+    if !(names == ["x", "y"] || names == ["x", "y", "z"])
+        || cur
+            .get_fields()
+            .iter()
+            .any(|c| c.is_group() || c.get_physical_type() != PhysicalType::DOUBLE)
+    {
+        return Err(format!(
+            "GeoArrow coordinates must be a struct of DOUBLE x, y[, z]; found {names:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn stat_min_max(cc: &ColumnChunkMetaData) -> (Option<f64>, Option<f64>) {
+    match cc.statistics() {
+        Some(Statistics::Double(s)) => (s.min_opt().copied(), s.max_opt().copied()),
+        Some(Statistics::Float(s)) => (
+            s.min_opt().map(|v| f64::from(*v)),
+            s.max_opt().map(|v| f64::from(*v)),
+        ),
+        _ => (None, None),
+    }
+}
+
+/// Row-group bounding boxes from the Parquet column statistics of a bbox covering column, the
+/// statistics source of 1.x files (and of 2.0 files written without native statistics).
+fn covering_boxes(meta: &ParquetMetaData, bcol: &str) -> Vec<Option<[f64; 4]>> {
+    (0..meta.num_row_groups())
+        .map(|rg| {
+            let mut v: [Option<f64>; 4] = [None; 4];
+            for cc in meta.row_group(rg).columns() {
+                let parts = cc.column_path().parts();
+                if parts.len() == 2 && parts[0] == bcol {
+                    let (min, max) = stat_min_max(cc);
+                    match parts[1].as_str() {
+                        "xmin" => v[0] = min,
+                        "ymin" => v[1] = min,
+                        "xmax" => v[2] = max,
+                        "ymax" => v[3] = max,
+                        _ => {}
+                    }
+                }
+            }
+            match v {
+                [Some(a), Some(b), Some(c), Some(d)] => Some([a, b, c, d]),
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 fn bbox_nums(col: &Value) -> Option<Vec<f64>> {
@@ -559,6 +746,8 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
     let mut out: Vec<Outcome> = Vec::new();
     let file = src.describe();
     let sampled = std::cell::Cell::new(false);
+    let version = std::cell::RefCell::new(String::from("unknown"));
+    let rules = std::cell::RefCell::new(String::from(Spec::V2_0.rules()));
     let finish = |mut out: Vec<Outcome>, reason: &str| {
         for id in ALL_IDS {
             if !out.iter().any(|o| o.id == id) {
@@ -571,6 +760,8 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
             outcomes: out,
             traffic: src.traffic(),
             sampled: sampled.get(),
+            version: version.borrow().clone(),
+            rules: rules.borrow().clone(),
         }
     };
 
@@ -602,6 +793,7 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
 
     // /conf/core/geo-metadata
     let mut t = T::new(GEO_METADATA);
+    let mut spec = Spec::V2_0;
     let geo = match kv.get("geo") {
         None => {
             t.fail("no `geo` key in FileMetaData.key_value_metadata");
@@ -609,7 +801,20 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
         }
         Some(s) => match serde_json::from_str::<Value>(s) {
             Ok(v @ Value::Object(_)) => {
-                let errs = schema_errors(&schemas.geo, &v, 5);
+                match v.get("version").and_then(Value::as_str) {
+                    Some(ver) => {
+                        *version.borrow_mut() = ver.to_string();
+                        match Spec::from_version(ver) {
+                            Some(sp) => spec = sp,
+                            None => t.note(format!(
+                                "version \"{ver}\" is not a known GeoParquet version; validated as 2.0.0"
+                            )),
+                        }
+                    }
+                    None => t.note("no version member; validated as 2.0.0"),
+                }
+                *rules.borrow_mut() = spec.rules().to_string();
+                let errs = schema_errors(schemas.geo(spec), &v, 5);
                 if errs.is_empty() {
                     t.ok();
                 }
@@ -636,8 +841,20 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
     // /conf/core/file-metadata
     let mut t = T::new(FILE_METADATA);
     match geo.get("version").and_then(Value::as_str) {
-        Some("2.0.0") => t.ok(),
-        Some(v) => t.fail(format!("version is \"{v}\", expected \"2.0.0\"")),
+        Some(v) if spec.versions().contains(&v) => {
+            t.ok();
+            if v != spec.versions()[0] {
+                t.note(format!("version \"{v}\" is a pre-release string"));
+            }
+        }
+        Some(v) => t.fail(format!(
+            "version is \"{v}\", expected {}",
+            spec.versions()
+                .iter()
+                .map(|x| format!("\"{x}\""))
+                .collect::<Vec<_>>()
+                .join(" or ")
+        )),
         None => t.fail("version missing or not a string"),
     }
     let primary = geo
@@ -714,30 +931,58 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
             }
             continue;
         };
-        if f.is_group() {
+        let encoding = col.get("encoding").and_then(Value::as_str);
+        let geoarrow = spec != Spec::V2_0 && encoding.is_some_and(|e| GEOARROW.contains(&e));
+        if f.is_group() && !geoarrow {
             t_nest.fail(format!("`{name}` is a group field"));
             continue;
         }
         t_nest.ok();
         geom_fields.insert(name, f);
         t_type.ok();
-        if f.get_physical_type() != PhysicalType::BYTE_ARRAY {
-            t_type.fail(format!(
-                "`{name}`: primitive type is {:?}, expected BYTE_ARRAY",
-                f.get_physical_type()
-            ));
-        }
-        let lt = logical(f);
-        if !is_geo_logical(&lt) {
-            t_type.fail(format!(
-                "`{name}`: logical type is {}, expected GEOMETRY or GEOGRAPHY",
-                lt.map(|l| format!("{l:?}")).unwrap_or("none".into())
-            ));
-        }
-        match col.get("encoding") {
-            Some(Value::String(e)) if e == "WKB" => {}
-            Some(v) => t_type.fail(format!("`{name}`: encoding is {v}, expected \"WKB\"")),
-            None => t_type.fail(format!("`{name}`: encoding is missing, expected \"WKB\"")),
+        if geoarrow {
+            let enc = encoding.unwrap_or_default();
+            if spec == Spec::V1_0 {
+                t_type.fail(format!(
+                    "`{name}`: encoding {enc:?} is a GeoArrow encoding, which 1.0.0 does not define"
+                ));
+            }
+            if let Err(e) = geoarrow_shape(f, enc) {
+                t_type.fail(format!("`{name}`: {e}"));
+            }
+        } else {
+            if f.get_physical_type() != PhysicalType::BYTE_ARRAY {
+                t_type.fail(format!(
+                    "`{name}`: primitive type is {:?}, expected BYTE_ARRAY",
+                    f.get_physical_type()
+                ));
+            }
+            let lt = logical(f);
+            if spec == Spec::V2_0 {
+                if !is_geo_logical(&lt) {
+                    t_type.fail(format!(
+                        "`{name}`: logical type is {}, expected GEOMETRY or GEOGRAPHY",
+                        lt.map(|l| format!("{l:?}")).unwrap_or("none".into())
+                    ));
+                }
+            } else if is_geo_logical(&lt) {
+                t_type.note(format!(
+                    "`{name}`: carries a Parquet GEOMETRY/GEOGRAPHY type although the file declares {}",
+                    spec.versions()[0]
+                ));
+            }
+            let expected = if spec == Spec::V1_1 {
+                "\"WKB\" or a GeoArrow encoding"
+            } else {
+                "\"WKB\""
+            };
+            match col.get("encoding") {
+                Some(Value::String(e)) if e == "WKB" => {}
+                Some(v) => t_type.fail(format!("`{name}`: encoding is {v}, expected {expected}")),
+                None => t_type.fail(format!(
+                    "`{name}`: encoding is missing, expected {expected}"
+                )),
+            }
         }
         let bi = f.get_basic_info();
         if !bi.has_repetition() {
@@ -755,7 +1000,15 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
     // one pass over the data of every geometry column that is a root BYTE_ARRAY
     let mut scans: BTreeMap<&str, Scan> = BTreeMap::new();
     let mut scan_errors: BTreeMap<&str, String> = BTreeMap::new();
+    let mut not_wkb: BTreeMap<&str, String> = BTreeMap::new();
     for (name, f) in &geom_fields {
+        if f.is_group() {
+            not_wkb.insert(
+                name,
+                "GeoArrow-encoded column; this checker decodes WKB only, so the data tests are not run".into(),
+            );
+            continue;
+        }
         if f.get_physical_type() != PhysicalType::BYTE_ARRAY {
             continue;
         }
@@ -786,10 +1039,20 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
         }
     }
 
+    let unread = |name: &str| -> Option<String> {
+        scan_errors
+            .get(name)
+            .cloned()
+            .or_else(|| not_wkb.get(name).cloned())
+    };
+
     // /conf/core/wkb
     let mut t = T::new(WKB);
     for (name, e) in &scan_errors {
         t.fail(format!("`{name}`: cannot read column: {e}"));
+    }
+    for (name, e) in &not_wkb {
+        t.note(format!("`{name}`: {e}"));
     }
     for (name, sc) in &scans {
         t.ok();
@@ -819,7 +1082,7 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
         let mut declared: BTreeSet<String> = BTreeSet::new();
         for v in list {
             match v.as_str() {
-                Some(s) if valid_type_name(s) => {
+                Some(s) if valid_type_name(s, spec) => {
                     if !declared.insert(s.to_string()) {
                         t.fail(format!("`{name}`: geometry_types lists \"{s}\" twice"));
                     }
@@ -845,7 +1108,7 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
                     ));
                 }
             }
-        } else if let Some(e) = scan_errors.get(name.as_str()) {
+        } else if let Some(e) = unread(name.as_str()) {
             t.note(format!(
                 "`{name}`: data not read ({e}); types in the data not verified"
             ));
@@ -875,7 +1138,7 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
             None | Some(Value::Null) => {}
             Some(v @ Value::Object(_)) => {
                 t.ok();
-                for e in schema_errors(&schemas.projjson, v, 3) {
+                for e in schema_errors(schemas.crs(spec), v, 3) {
                     t.fail(format!("`{name}`: PROJJSON schema: {e}"));
                 }
             }
@@ -893,52 +1156,58 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
     for (name, f) in &geom_fields {
         let col = &columns[*name];
         let lt = logical(f);
-        if !is_geo_logical(&lt) {
-            continue;
-        }
-        let a = Crs::from_geo(col);
-        let b = Crs::from_parquet(parquet_crs(&lt).as_deref(), &kv);
-        match (&a, &b) {
-            (Crs::Undefined, Crs::Undefined) => t.ok(),
-            (Crs::Authority(..), Crs::Authority(..)) if a == b => t.ok(),
-            (Crs::Authority(..), Crs::Authority(..))
-            | (Crs::Undefined, _)
-            | (_, Crs::Undefined) => t.fail(format!(
-                "`{name}`: geo crs is {} but Parquet crs is {}",
-                a.describe(),
-                b.describe()
-            )),
-            _ => t.note(format!(
-                "`{name}`: cannot compare {} with {} without a CRS library",
-                a.describe(),
-                b.describe()
-            )),
-        }
-        if col.get("crs").is_none() {
-            match &b {
-                b if *b == Crs::crs84() => td.ok(),
-                Crs::Authority(..) | Crs::Undefined => td.fail(format!(
-                    "`{name}`: no geo crs (default OGC:CRS84) but Parquet crs is {}",
+        // 1.x files have no Parquet crs parameter unless written with native types
+        let parquet =
+            is_geo_logical(&lt).then(|| Crs::from_parquet(parquet_crs(&lt).as_deref(), &kv));
+        if let Some(b) = &parquet {
+            let a = Crs::from_geo(col);
+            match (&a, b) {
+                (Crs::Undefined, Crs::Undefined) => t.ok(),
+                (Crs::Authority(..), Crs::Authority(..)) if a == *b => t.ok(),
+                (Crs::Authority(..), Crs::Authority(..))
+                | (Crs::Undefined, _)
+                | (_, Crs::Undefined) => t.fail(format!(
+                    "`{name}`: geo crs is {} but Parquet crs is {}",
+                    a.describe(),
                     b.describe()
                 )),
-                _ => td.note(format!(
-                    "`{name}`: Parquet crs is {}; cannot compare with OGC:CRS84 without a CRS library",
+                _ => t.note(format!(
+                    "`{name}`: cannot compare {} with {} without a CRS library",
+                    a.describe(),
                     b.describe()
                 )),
             }
+        }
+        if col.get("crs").is_none() {
+            match &parquet {
+                Some(b) if *b == Crs::crs84() => td.ok(),
+                Some(b @ (Crs::Authority(..) | Crs::Undefined)) => td.fail(format!(
+                    "`{name}`: no geo crs (default OGC:CRS84) but Parquet crs is {}",
+                    b.describe()
+                )),
+                Some(b) => td.note(format!(
+                    "`{name}`: Parquet crs is {}; cannot compare with OGC:CRS84 without a CRS library",
+                    b.describe()
+                )),
+                None => {}
+            }
             if let Some(sc) = scans.get(name) {
+                td.ok();
                 if sc.lonlat_bad > 0 {
                     td.fail(format!(
                         "`{name}`: {} geometries have coordinates outside [-180,180]x[-90,90]",
                         sc.lonlat_bad
                     ));
                 }
-            } else if let Some(e) = scan_errors.get(name) {
+            } else if let Some(e) = unread(name) {
                 td.note(format!(
                     "`{name}`: data not read ({e}); coordinate ranges not verified"
                 ));
             }
         }
+    }
+    if spec != Spec::V2_0 && !t.applicable {
+        t.note("GeoParquet 1.x has no Parquet crs parameter to compare with the geo crs");
     }
     out.push(t.finish());
     out.push(td.finish());
@@ -953,7 +1222,7 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
                     if sc.lonlat_bad > 0 {
                         t.fail(format!("`{name}`: {} geometries have first/second coordinates outside longitude/latitude range", sc.lonlat_bad));
                     }
-                } else if let Some(e) = scan_errors.get(name.as_str()) {
+                } else if let Some(e) = unread(name.as_str()) {
                     t.note(format!("`{name}`: data not read ({e})"));
                 }
             }
@@ -977,8 +1246,11 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
     for (name, col) in &columns {
         if let Some(v) = col.get("edges") {
             t.ok();
-            if !v.as_str().is_some_and(|s| EDGES.contains(&s)) {
-                t.fail(format!("`{name}`: edges is {v}, expected one of {EDGES:?}"));
+            if !v.as_str().is_some_and(|s| spec.edges().contains(&s)) {
+                t.fail(format!(
+                    "`{name}`: edges is {v}, expected one of {:?}",
+                    spec.edges()
+                ));
             }
         }
         if let Some(v) = col.get("epoch") {
@@ -1007,7 +1279,7 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
             continue;
         }
         let Some(sc) = scans.get(name.as_str()) else {
-            if let Some(e) = scan_errors.get(name.as_str()) {
+            if let Some(e) = unread(name.as_str()) {
                 t.note(format!("`{name}`: data not read ({e})"));
             }
             continue;
@@ -1086,7 +1358,7 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
                     sc.outside_bbox
                 ));
             }
-        } else if let Some(e) = scan_errors.get(name.as_str()) {
+        } else if let Some(e) = unread(name.as_str()) {
             tx.note(format!("`{name}`: data not read ({e})"));
         }
     }
@@ -1106,6 +1378,9 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
         }
     } else {
         let mut tk = T::new(COV_KEYS);
+        if spec == Spec::V1_0 {
+            tk.note("`covering` is not defined in GeoParquet 1.0.0; checked with the 1.1 rules");
+        }
         let mut tp = T::new(COV_BBOX_PATHS);
         let mut ts = T::new(COV_STRUCTURE);
         let mut tt = T::new(COV_TYPE);
@@ -1222,51 +1497,75 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
         ]);
     }
 
-    // Cloud-Optimized Distribution class
-    let mut t = T::new(DIST_STATS);
-    for (name, f) in &geom_fields {
-        if !is_geo_logical(&logical(f)) {
-            continue;
-        }
-        t.ok();
-        let missing: Vec<usize> = (0..meta.num_row_groups())
-            .filter(|rg| {
-                chunk(meta, *rg, name)
+    // Cloud-Optimized Distribution class. 2.0 files carry native GeospatialStatistics; 1.x files
+    // can only offer the column statistics of a bbox covering column.
+    let native_boxes = |name: &str| -> Vec<Option<[f64; 4]>> {
+        (0..meta.num_row_groups())
+            .map(|rg| {
+                chunk(meta, rg, name)
                     .and_then(|c| c.geo_statistics())
                     .and_then(|s| s.bounding_box())
-                    .is_none()
+                    .map(|b| [b.get_xmin(), b.get_ymin(), b.get_xmax(), b.get_ymax()])
             })
-            .collect();
-        if !missing.is_empty() {
+            .collect()
+    };
+    let mut primary_boxes: Option<Vec<Option<[f64; 4]>>> = None;
+    let mut t = T::new(DIST_STATS);
+    for (name, f) in &geom_fields {
+        let col = &columns[*name];
+        let native = native_boxes(name);
+        let has_native = is_geo_logical(&logical(f));
+        let covering = col.get("covering").and_then(|c| resolve_bbox_paths(c).ok());
+        let (boxes, source): (Vec<Option<[f64; 4]>>, String) = if has_native
+            && (spec == Spec::V2_0 || native.iter().all(Option::is_some))
+        {
+            (native, "native geospatial statistics".into())
+        } else if let Some(bcol) = covering {
+            (
+                covering_boxes(meta, &bcol),
+                format!("column statistics of the bbox covering `{bcol}`"),
+            )
+        } else if spec == Spec::V2_0 {
+            continue;
+        } else {
             t.fail(format!(
-                "`{name}`: no geospatial statistics bbox in row groups {missing:?}"
-            ));
+                    "`{name}`: no row-group statistics source; a {} file needs a bbox covering column (2.0 files carry native statistics)",
+                    spec.versions()[0]
+                ));
+            continue;
+        };
+        t.ok();
+        let missing: Vec<usize> = boxes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| b.is_none().then_some(i))
+            .collect();
+        if missing.is_empty() {
+            t.note(format!("`{name}`: {source}"));
+        } else {
+            t.fail(format!("`{name}`: no {source} in row groups {missing:?}"));
+        }
+        if *name == primary {
+            primary_boxes = Some(boxes);
         }
     }
     out.push(t.finish());
 
-    let boxes: Option<Vec<[f64; 4]>> = geom_fields.contains_key(primary).then(|| {
-        (0..meta.num_row_groups())
-            .filter_map(|rg| {
-                chunk(meta, rg, primary)
-                    .and_then(|c| c.geo_statistics())
-                    .and_then(|s| s.bounding_box())
-            })
-            .map(|b| [b.get_xmin(), b.get_ymin(), b.get_xmax(), b.get_ymax()])
-            .collect()
-    });
-    out.push(match boxes {
-        Some(b) if b.len() == meta.num_row_groups() => match spatial::measure(&b) {
-            Err(reason) => skip(DIST_SPATIAL_ORDER, reason),
-            Ok(m) => {
-                let msg = format!(
-                    "{} row groups: skip rate {:.3} vs ideal tiling {:.3} (ratio {:.2}, pass at {:.2}); area factor {:.2}",
-                    m.row_groups, m.file_skip, m.ideal_skip, m.ratio, spatial::PASS_RATIO, m.area_factor
-                );
-                Outcome { id: DIST_SPATIAL_ORDER, status: if m.ratio >= spatial::PASS_RATIO { Status::Pass } else { Status::Fail }, message: msg }
+    out.push(match primary_boxes {
+        Some(b) if b.iter().all(Option::is_some) => {
+            let boxes: Vec<[f64; 4]> = b.into_iter().flatten().collect();
+            match spatial::measure(&boxes) {
+                Err(reason) => skip(DIST_SPATIAL_ORDER, reason),
+                Ok(m) => {
+                    let msg = format!(
+                        "{} row groups: skip rate {:.3} vs ideal tiling {:.3} (ratio {:.2}, pass at {:.2}); area factor {:.2}",
+                        m.row_groups, m.file_skip, m.ideal_skip, m.ratio, spatial::PASS_RATIO, m.area_factor
+                    );
+                    Outcome { id: DIST_SPATIAL_ORDER, status: if m.ratio >= spatial::PASS_RATIO { Status::Pass } else { Status::Fail }, message: msg }
+                }
             }
-        },
-        _ => skip(DIST_SPATIAL_ORDER, "primary column lacks geospatial statistics in some row group"),
+        }
+        _ => skip(DIST_SPATIAL_ORDER, "primary column has no row-group bounding boxes (see geospatial-statistics)"),
     });
 
     Ok(finish(out, "not run"))
