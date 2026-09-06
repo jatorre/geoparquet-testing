@@ -696,7 +696,8 @@
   "author/v11_geoarrow_point.parquet": {
     "fail": [],
     "skip": [
-      "/conf/core/axis-order",
+      "/conf/core/bbox-array",
+      "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
       "/conf/core/crs-default",
@@ -714,7 +715,8 @@
       "/conf/distribution/geospatial-statistics"
     ],
     "skip": [
-      "/conf/core/axis-order",
+      "/conf/core/bbox-array",
+      "/conf/core/bbox-crs",
       "/conf/core/bbox-extent",
       "/conf/core/crs-consistency",
       "/conf/core/crs-default",

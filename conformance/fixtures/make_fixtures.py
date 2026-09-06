@@ -148,14 +148,17 @@ write_v("v10_types_m", plain, {"geometry": {**c10, "geometry_types": ["Point M"]
 write_v("v11_wkb_covering_ok", pa.table({"geometry": pa.array(geom.storage.to_pylist(), pa.binary()), "bbox": bbox_struct(boxes)}),
         {"geometry": {**c10, "covering": COV}}, "1.1.0")                                     # 1.1: covering gives the statistics source
 write_v("v11_geoarrow_encoding_on_binary", plain, {"geometry": {**c10, "encoding": "point"}}, "1.1.0")  # encoding point but a binary column
-try:
-    import geopandas as gpd
-    from shapely.geometry import Point, Polygon
-    gdf = gpd.GeoDataFrame({"id": [1, 2, 3]}, geometry=[Point(1, 1), Point(2, 2), Point(3, 3)], crs="EPSG:4326")
-    gdf.to_parquet(OUT / "v11_geoarrow_point.parquet", schema_version="1.1.0", geometry_encoding="geoarrow", write_covering_bbox=True)
-    print("wrote v11_geoarrow_point")
-    polys = gpd.GeoDataFrame({"id": [1]}, geometry=[Polygon([(0, 0), (1, 0), (1, 1), (0, 1), (0, 0)])], crs="EPSG:4326")
-    polys.to_parquet(OUT / "v11_geoarrow_polygon.parquet", schema_version="1.1.0", geometry_encoding="geoarrow")
-    print("wrote v11_geoarrow_polygon")
-except ImportError as e:
-    print("geopandas not available; GeoArrow fixtures skipped:", e)
+# GeoArrow encodings built with pyarrow alone (no geopandas), so CI can generate them too:
+# point = struct<x: double, y: double>; polygon = list<list<struct<x, y>>> (rings of points).
+def xy_struct(coords):
+    return pa.StructArray.from_arrays([pa.array([c[0] for c in coords], pa.float64()), pa.array([c[1] for c in coords], pa.float64())], names=["x", "y"])
+
+pts_xy = [(1.0, 1.0), (2.0, 2.0), (3.0, 3.0)]
+point_col = xy_struct(pts_xy)
+write_v("v11_geoarrow_point", pa.table({"id": [1, 2, 3], "geometry": point_col, "bbox": bbox_struct([(x, y, x, y) for x, y in pts_xy])}),
+        {"geometry": {"encoding": "point", "geometry_types": ["Point"], "crs": CRS84, "covering": COV}}, "1.1.0")
+ring = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.0, 0.0)]
+rings = pa.ListArray.from_arrays(pa.array([0, len(ring)], pa.int32()), xy_struct(ring))          # one ring
+polygon_col = pa.ListArray.from_arrays(pa.array([0, 1], pa.int32()), rings)                     # one polygon
+write_v("v11_geoarrow_polygon", pa.table({"id": [1], "geometry": polygon_col}),
+        {"geometry": {"encoding": "polygon", "geometry_types": ["Polygon"], "crs": CRS84}}, "1.1.0")
