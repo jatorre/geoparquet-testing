@@ -56,6 +56,7 @@ def bbox_struct(xs, types=("double",)*4, names=("xmin", "ymin", "xmax", "ymax"),
 boxes = [(1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3)]
 COV = {"bbox": {"xmin": ["bbox", "xmin"], "ymin": ["bbox", "ymin"], "xmax": ["bbox", "xmax"], "ymax": ["bbox", "ymax"]}}
 write("cov_ok", pa.table({"geometry": geom, "bbox": bbox_struct(boxes)}), {"geometry": col(covering=COV)})
+# four fields in another order: conformant since PR #302 merged without the order rule (SI-26)
 write("cov_wrong_order", pa.table({"geometry": geom, "bbox": bbox_struct(boxes, names=("xmin", "xmax", "ymin", "ymax"))}),
       {"geometry": col(covering={"bbox": {"xmin": ["bbox", "xmin"], "ymin": ["bbox", "ymin"], "xmax": ["bbox", "xmax"], "ymax": ["bbox", "ymax"]}})})
 write("cov_mixed_types", pa.table({"geometry": geom, "bbox": bbox_struct(boxes, types=("double", "float", "double", "double"))}), {"geometry": col(covering=COV)})

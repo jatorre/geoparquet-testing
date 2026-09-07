@@ -1430,18 +1430,27 @@ pub fn run<S: Source>(src: &S, schemas: &Schemas, opts: &Options) -> Result<Repo
             }
             let children = bf.get_fields();
             let names: Vec<&str> = children.iter().map(|c| c.name()).collect();
-            let expected: &[&str] = match children.len() {
-                4 => &["xmin", "ymin", "xmax", "ymax"],
-                6 => &["xmin", "ymin", "zmin", "xmax", "ymax", "zmax"],
-                n => {
-                    ts.fail(format!("`{bcol}` has {n} child fields, expected 4 or 6"));
-                    &[]
+            // The four child fields must be named but may come in any order (the order rule was
+            // dropped when PR #302 merged); the six-child form keeps its order.
+            match children.len() {
+                4 => {
+                    let mut sorted = names.clone();
+                    sorted.sort_unstable();
+                    if sorted != ["xmax", "xmin", "ymax", "ymin"] {
+                        ts.fail(format!(
+                            "`{bcol}` child fields are {names:?}, expected `xmin`, `ymin`, `xmax` and `ymax` in any order"
+                        ));
+                    }
                 }
-            };
-            if !expected.is_empty() && names != expected {
-                ts.fail(format!(
-                    "`{bcol}` child fields are {names:?}, expected {expected:?}"
-                ));
+                6 => {
+                    let expected = ["xmin", "ymin", "zmin", "xmax", "ymax", "zmax"];
+                    if names != expected {
+                        ts.fail(format!(
+                            "`{bcol}` child fields are {names:?}, expected {expected:?} in that order"
+                        ));
+                    }
+                }
+                n => ts.fail(format!("`{bcol}` has {n} child fields, expected 4 or 6")),
             }
             tt.ok();
             let mut kinds: BTreeSet<String> = BTreeSet::new();

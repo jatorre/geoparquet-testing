@@ -266,9 +266,7 @@
     ]
   },
   "author/cov_wrong_order.parquet": {
-    "fail": [
-      "/conf/covering/bbox-column-structure"
-    ],
+    "fail": [],
     "skip": [
       "/conf/core/bbox-array",
       "/conf/core/bbox-crs",

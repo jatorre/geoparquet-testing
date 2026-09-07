@@ -71,7 +71,7 @@ Remote files, from a laptop (about 5 MB/s to S3):
 | Target | Rows read | Bytes / requests | Wall time | Result |
 | --- | --- | --- | --- | --- |
 | opengeospatial/geoparquet `examples/example.parquet` (GitHub raw) | all | 0.03 MB / 1 | 0.26 s | Core conformant |
-| Overture 2026-08-19.0 buildings part-00000 (5.0 M rows, S3) | first 100 000 | 21 MB / 2 | 6 s | 1.1 file: version and logical type fail as expected; Covering: `bbox` fields in the wrong order (see below) |
+| Overture 2026-08-19.0 buildings part-00000 (5.0 M rows, S3) | first 100 000 | 21 MB / 2 | 6 s | conformant under the 1.1 rules |
 | Overture buildings partition (512 objects), `--max-files 2` | 100 000 each | 2 x 21 MB | 12 s | same, per file |
 | Overture 2026-08-19.0 divisions/division_area part-00000 (721 MB, 138 481 polygons, S3), whole file | all | 804 MB / 341 | 240 s | every WKB polygon decoded; same verdicts |
 | source.coop / geoarrow-data 1.0 files (HTTPS) | all | 1 to 8 MB / 1 | 1 to 4 s | 1.0 files fail version and logical type as expected |
@@ -95,10 +95,11 @@ The same 250 features (200 points, 50 CCW squares, lon/lat) written by every wri
 
 `fixtures/public_samples.sh` downloads the example files other projects publish (the specification's
 own examples at 1.0.0, 1.1.0 and main; GDAL's autotest Parquet data; Apache Sedona's test data;
-geoarrow-data) and checks them: 38 files, no crashes, every verdict explainable. Two things it found:
-the **1.1.0 specification's own example file** orders its bbox struct `xmax, xmin, ymax, ymin`, so the
-"MUST be ordered in this same way" sentence was never followed even by the reference example (SI-26);
-and GDAL's 1.1 test files, including one with a covering, are fully conformant under the 1.1 rules.
+geoarrow-data) and checks them: 38 files, no crashes, every verdict explainable. Its main find: the
+**1.1.0 specification's own example file** orders its bbox struct `xmax, xmin, ymax, ymin`, so the
+"MUST be ordered in this same way" sentence was never followed even by the reference example. That
+evidence retired the rule (SI-26, dropped when PR #302 merged). GDAL's 1.1 test files, including one
+with a covering, are fully conformant under the 1.1 rules.
 Pre-1.0 files (GeoParquet 0.1.0, 0.4.0) are checked as 2.0 with a note, since their rules are not
 implemented.
 
@@ -127,8 +128,8 @@ structurally: a struct of x, y[, z] under the right number of list levels; their
 no `M` types, `edges` limited to planar and spherical, no Parquet `crs` comparison unless the file
 carries native types, and the bbox covering column's Parquet statistics as the row-group statistics
 source for the Distribution class. The report says which rules were applied. Overture 2026-08-19.0
-buildings under the 1.1 rules: Core conformant, Covering fails only on the bbox field order (SI-26),
-Distribution conformant with spatial order measured from the covering statistics over 256 row groups.
+buildings under the 1.1 rules: Core, Covering and Distribution conformant, with spatial order measured
+from the covering statistics over 256 row groups.
 
 ## In the browser
 
@@ -156,11 +157,12 @@ Four layers, all but the last in CI (`.github/workflows/conformance.yml`):
 
 ## Findings for the spec and the corpus
 
-0. **Every Overture Maps file orders its bbox struct `xmin, xmax, ymin, ymax`.** GeoParquet 1.1 and
-   PR #302 both say the fields "MUST be ordered in this same way" (`xmin, ymin, xmax, ymax`), so the
-   largest producer fails `/conf/covering/bbox-column-structure`, and no validator had ever checked the
-   order. Readers use field names; the order requirement carries no information and should probably
-   go from #302.
+0. **The bbox field-order rule is gone, and this checker is why.** Every Overture Maps file orders
+   its bbox struct `xmin, xmax, ymin, ymax`; the 1.1.0 specification's own `examples/example.parquet`
+   orders it `xmax, xmin, ymax, ymin`; Apache Sedona's 1.1 test file does the same. GeoParquet 1.1 and
+   the draft of PR #302 required the order, and no validator had ever checked it. #302 merged on
+   2026-09-07 **without** the rule for the four-field form (the six-field form keeps its order), and
+   the checker follows the merged text: those three files are now Covering conformant.
 1. `bad_data/crs-invalid-projjson.parquet` (a `crs` without `type`) passes the PROJJSON JSON Schema:
    the schema's top-level `oneOf` also accepts ellipsoids, datums and operations, and `{id, name}` is
    a valid ellipsoid. The OGC test `/conf/core/crs-projjson` should say "PROJJSON **CRS** object"
